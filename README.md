@@ -1,4 +1,4 @@
-# @hotlap/telemetry
+# @hotlap.ai/telemetry
 
 High-performance iRacing telemetry SDK for [Bun](https://bun.sh). Parse IBT telemetry files and stream live data from iRacing via Windows shared memory.
 
@@ -19,7 +19,7 @@ High-performance iRacing telemetry SDK for [Bun](https://bun.sh). Parse IBT tele
 ## Installation
 
 ```bash
-bun add @hotlap/telemetry
+bun add @hotlap.ai/telemetry
 ```
 
 ## Usage
@@ -27,7 +27,7 @@ bun add @hotlap/telemetry
 ### Parse IBT Files
 
 ```typescript
-import { IBT } from '@hotlap/telemetry';
+import { IBT } from '@hotlap.ai/telemetry';
 
 const ibt = new IBT();
 await ibt.open('./telemetry.ibt');
@@ -51,7 +51,7 @@ for (let i = 0; i < ibt.recordCount; i++) {
 ### Live Telemetry
 
 ```typescript
-import { createIRSDK } from '@hotlap/telemetry';
+import { createIRSDK } from '@hotlap.ai/telemetry';
 
 const ir = createIRSDK();
 
@@ -91,7 +91,7 @@ import { spawn } from 'bun';
 
 // Start the telemetry server
 const server = spawn(['bun', 'run', 'server'], {
-  cwd: './node_modules/@hotlap/telemetry',
+  cwd: './node_modules/@hotlap.ai/telemetry',
 });
 
 // Connect from client

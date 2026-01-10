@@ -1,5 +1,5 @@
 {
-  "name": "@hotlap/telemetry",
+  "name": "@hotlap.ai/telemetry",
   "version": "1.0.0",
   "description": "High-performance iRacing SDK for Bun - telemetry parsing and live data",
   "type": "module",
