@@ -1,5 +1,5 @@
 {
-  "name": "@hotlap/irsdk",
+  "name": "@hotlap/telemetry",
   "version": "1.0.0",
   "description": "High-performance iRacing SDK for Bun - telemetry parsing and live data",
   "type": "module",
@@ -31,7 +31,7 @@
     "build": "bun build ./src/index.ts ./src/ibt.ts ./src/live.ts ./src/constants.ts ./src/cli.ts ./src/telemetry-server.ts --outdir ./dist --target bun --splitting",
     "build:server": "bun build ./src/telemetry-server.ts --compile --outfile ./dist/hotlap-telemetry",
     "dev": "bun --watch src/cli.ts",
-    "dashboard": "bun run src/dashboard-server.ts",
+    "dashboard": "bun run examples/dashboard-server.ts",
     "server": "bun run src/telemetry-server.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
