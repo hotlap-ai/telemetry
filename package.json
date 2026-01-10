@@ -3,39 +3,53 @@
   "version": "1.0.0",
   "description": "High-performance iRacing SDK for Bun - telemetry parsing and live data",
   "type": "module",
-  "main": "dist/index.js",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "default": "./dist/index.js"
     },
     "./ibt": {
+      "types": "./dist/ibt.d.ts",
       "import": "./dist/ibt.js",
-      "types": "./dist/ibt.d.ts"
+      "default": "./dist/ibt.js"
     },
     "./live": {
+      "types": "./dist/live.d.ts",
       "import": "./dist/live.js",
-      "types": "./dist/live.d.ts"
+      "default": "./dist/live.js"
     },
     "./constants": {
+      "types": "./dist/constants.d.ts",
       "import": "./dist/constants.js",
-      "types": "./dist/constants.d.ts"
+      "default": "./dist/constants.js"
     }
   },
   "bin": {
     "irsdk": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CONTRIBUTING.md"
+  ],
   "scripts": {
-    "build": "bun build ./src/index.ts ./src/ibt.ts ./src/live.ts ./src/constants.ts ./src/cli.ts ./src/telemetry-server.ts --outdir ./dist --target bun --splitting",
+    "build": "bun run build:js && bun run build:types",
+    "build:js": "bun build ./src/index.ts ./src/ibt.ts ./src/live.ts ./src/constants.ts ./src/cli.ts ./src/telemetry-server.ts ./src/types.ts ./src/binary-reader.ts --outdir ./dist --target bun --splitting",
+    "build:types": "tsc --emitDeclarationOnly --declaration --declarationMap --outDir ./dist",
     "build:server": "bun build ./src/telemetry-server.ts --compile --outfile ./dist/hotlap-telemetry",
+    "clean": "rm -rf dist",
     "dev": "bun --watch src/cli.ts",
     "dashboard": "bun run examples/dashboard-server.ts",
     "server": "bun run src/telemetry-server.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "bench": "bun run bench/parse-ibt.bench.ts"
+    "bench": "bun run bench/parse-ibt.bench.ts",
+    "prepublishOnly": "bun run clean && bun run build"
   },
   "dependencies": {
     "yaml": "^2.7.0"
@@ -45,10 +59,32 @@
     "mitata": "^1.0.10",
     "typescript": "^5.7.2"
   },
-  "keywords": ["iracing", "telemetry", "ibt", "racing", "simulator", "bun"],
+  "keywords": [
+    "iracing",
+    "telemetry",
+    "ibt",
+    "racing",
+    "simulator",
+    "bun",
+    "sim-racing",
+    "motorsport",
+    "data-logging"
+  ],
   "author": "HotLap.ai",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hotlap-ai/telemetry.git"
+  },
+  "homepage": "https://github.com/hotlap-ai/telemetry#readme",
+  "bugs": {
+    "url": "https://github.com/hotlap-ai/telemetry/issues"
+  },
   "engines": {
     "bun": ">=1.0.0"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
   }
 }

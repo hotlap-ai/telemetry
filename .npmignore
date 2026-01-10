@@ -1,0 +1,37 @@
+# Source files (dist is published instead)
+src/
+examples/
+bench/
+
+# Config files
+tsconfig.json
+.gitignore
+.claude/
+.mcp.json
+
+# Development
+*.tsbuildinfo
+.eslintcache
+.cache
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test files
+*.test.ts
+*.spec.ts
+__tests__/
+coverage/
+*.lcov
+
+# Build artifacts not needed
+*.tgz
