@@ -27,6 +27,11 @@
       "import": "./dist/neutral/normalize.js",
       "default": "./dist/neutral/normalize.js"
     },
+    "./session": {
+      "types": "./dist/session-yaml.d.ts",
+      "import": "./dist/neutral/session-yaml.js",
+      "default": "./dist/neutral/session-yaml.js"
+    },
     "./live": {
       "types": "./dist/live.d.ts",
       "import": "./dist/live.js",
@@ -50,7 +55,7 @@
   "scripts": {
     "build": "bun run build:js && bun run build:types",
     "build:js": "bun build ./src/index.ts ./src/ibt.ts ./src/live.ts ./src/constants.ts ./src/cli.ts ./src/telemetry-server.ts ./src/types.ts ./src/binary-reader.ts --outdir ./dist --target bun --splitting && bun run build:neutral",
-    "build:neutral": "bun build ./src/ibt.ts ./src/normalize.ts --outdir ./dist/neutral --target browser --splitting",
+    "build:neutral": "bun build ./src/ibt.ts ./src/normalize.ts ./src/session-yaml.ts --outdir ./dist/neutral --target browser --splitting",
     "build:types": "tsc --emitDeclarationOnly --declaration --declarationMap --outDir ./dist",
     "build:server": "bun build ./src/telemetry-server.ts --compile --outfile ./dist/hotlap-telemetry",
     "clean": "rm -rf dist",
