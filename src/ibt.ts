@@ -10,6 +10,8 @@ import {
   readVarValueBatch,
   readString,
 } from './binary-reader';
+// Canonical YAML cleaning lives in session-yaml.ts (RFC-0001 C5) — one copy.
+import { cleanYamlFast } from './session-yaml';
 
 export interface IbtOptions {
   lazyLoad?: boolean;
@@ -23,8 +25,18 @@ export class IBT {
   private diskHeader: DiskSubHeader | null = null;
   private varHeaders: Map<string, VarHeader> | null = null;
   private sessionInfoCache: Map<string, unknown> = new Map();
+  private static readonly sessionRegexCache = new Map<string, RegExp>();
   private rawSessionInfo: string | null = null;
   private filePath: string | null = null;
+
+  private static getSectionRegex(key: string): RegExp {
+    let regex = IBT.sessionRegexCache.get(key);
+    if (!regex) {
+      regex = new RegExp(`\n${key}:\n([\\s\\S]*?)(?=\n\n|$)`);
+      IBT.sessionRegexCache.set(key, regex);
+    }
+    return regex;
+  }
 
   get fileName(): string | null {
     return this.filePath;
@@ -269,7 +281,7 @@ export class IBT {
     if (!key) {
       if (!this.sessionInfoCache.has('__full__')) {
         try {
-          const cleaned = this.cleanYaml(raw);
+          const cleaned = cleanYamlFast(raw);
           this.sessionInfoCache.set('__full__', parseYaml(cleaned));
         } catch {
           return null;
@@ -282,12 +294,12 @@ export class IBT {
       return this.sessionInfoCache.get(key) as T;
     }
 
-    const sectionMatch = raw.match(new RegExp(`\n${key}:\n([\\s\\S]*?)(?=\n\n|$)`));
+    const sectionMatch = raw.match(IBT.getSectionRegex(key));
     if (!sectionMatch) return null;
 
     try {
       const sectionYaml = `${key}:\n${sectionMatch[1]}`;
-      const cleaned = this.cleanYaml(sectionYaml);
+      const cleaned = cleanYamlFast(sectionYaml);
       const parsed = parseYaml(cleaned);
       const result = parsed?.[key] ?? null;
       this.sessionInfoCache.set(key, result);
@@ -295,24 +307,6 @@ export class IBT {
     } catch {
       return null;
     }
-  }
-
-  private cleanYaml(yaml: string): string {
-    let cleaned = yaml
-      .replace(/[\x81\x8D\x8F\x90\x9D]/g, ' ')
-      .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g, '');
-
-    cleaned = cleaned.replace(
-      /((?:DriverSetupName|UserName|TeamName|AbbrevName|Initials): )(.*)/g,
-      (_, prefix, value) => {
-        const escaped = value.replace(/["\\]/g, '\\$&');
-        return `${prefix}"${escaped}"`;
-      }
-    );
-
-    cleaned = cleaned.replace(/(\w+: )(,.*)/g, '$1"$2"');
-
-    return cleaned;
   }
 }
 
