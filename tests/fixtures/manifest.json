@@ -1,0 +1,45 @@
+{
+  "$comment": "Golden .ibt fixture manifest (RFC-0001 §5). Binaries live in the private Supabase 'fixtures' bucket (immutable, content-addressed); this file is the source of truth for what a golden fixture IS. bun run fixtures:pull downloads into tests/fixtures/files/ (gitignored) and verifies sha256 — a hash mismatch is a hard failure. Expected outputs live in the golden tests; changes to either require a PR showing the delta.",
+  "version": 1,
+  "bucket": "fixtures",
+  "fixtures": [
+    {
+      "name": "acuransxevo22gt3_imola gp 2025-12-22 23-27-46.ibt",
+      "sha256": "c75d0e74a0b189cdf5be7bbc79869ca2ce09ff97e4a3c817ad00fecbe584a3f3",
+      "sizeBytes": 94313558,
+      "exercises": "GT3 race at Imola: 12 scored laps, 5 sectors, race session resolved via SessionNum=2, non-UTF8 YAML bytes (windows-1252 fallback)"
+    },
+    {
+      "name": "acuransxevo22gt3_roadatlanta full 2025-12-23 12-27-07.ibt",
+      "sha256": "25604741a07d8733be2840b7e4bba64493a75a4365dcaad4b1466df14194bcc1",
+      "sizeBytes": 43247618,
+      "exercises": "GT3 practice at Road Atlanta: out-lap handling, consistent 3-sector output, non-UTF8 YAML bytes"
+    },
+    {
+      "name": "acuransxevo22gt3_virginia 2022 full 2025-12-20 22-57-02.ibt",
+      "sha256": "70c4f71816236c83bd1d627d3405ddf06d66c7f56c8b13d23d3c124fed8bb630",
+      "sizeBytes": 107221055,
+      "exercises": "GT3 race at VIR: race-lap-1 fixture (sample span 326.33s vs sim-scored 121.5419s), largest local file (102MB resource datapoint)"
+    },
+    {
+      "name": "formulavee_miami gp 2025-12-26 18-54-31.ibt",
+      "sha256": "c1d938f2cf757f957cd234edb5c0f88fff0b06b496dd44b7151fd560e0e3ea5b",
+      "sizeBytes": 55460691,
+      "exercises": "Formula Vee offline testing at Miami: ghost-lap fixture (34s reset lap never scored by the sim), full 'Offline Testing' session string"
+    }
+  ],
+  "pending": [
+    {
+      "$comment": "Production files awaiting snapshot into the fixtures bucket (need service-role access). Storage paths refer to the telemetry-files bucket in project skslybsaupegobhomgiz; see RFC-0001 §5 and Appendix B.",
+      "candidates": [
+        "ferrari296gt3_virginia 2022 full 2026-06-24 22-20-25.ibt — externally cross-validated vs iRacing official + Garage 61 (subsession 86707072); tow laps",
+        "mercedesamgevogt3_roadamerica full 2026-06-16 23-57-12.ibt — race-lap-1 (370s vs 135.8s) and sector-count-flapping fixture (subsession 86504112)",
+        "mercedesamgevogt3_roadamerica full 2026-06-16 23-49-44.ibt — qualify recording mislabeled Race; session-identity fixture",
+        "dirtsprint nonwinged 360_kokomo 2026-04-17 18-58-33.ibt — 0.41km dirt oval, sub-45s laps",
+        "bmwm2csr_spa 2024 up 2026-01-28 20-23-25.ibt — 172MB resource-envelope fixture",
+        "audirs3lmsgen2_nurburgring combined 2026-05-19 18-53-23.ibt — 25.2km track, laps > 400s",
+        "acuransxevo22gt3_magnycours gp 2026-05-25 08-37-59.ibt — null track length in session metadata"
+      ]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 {
   "name": "@hotlap.ai/telemetry",
   "version": "1.0.0",
-  "description": "High-performance iRacing SDK for Bun - telemetry parsing and live data",
+  "description": "High-performance iRacing telemetry library for Bun - IBT file parsing and live data streaming",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -16,6 +16,16 @@
       "types": "./dist/ibt.d.ts",
       "import": "./dist/ibt.js",
       "default": "./dist/ibt.js"
+    },
+    "./core": {
+      "types": "./dist/ibt.d.ts",
+      "import": "./dist/neutral/ibt.js",
+      "default": "./dist/neutral/ibt.js"
+    },
+    "./normalize": {
+      "types": "./dist/normalize.d.ts",
+      "import": "./dist/neutral/normalize.js",
+      "default": "./dist/neutral/normalize.js"
     },
     "./live": {
       "types": "./dist/live.d.ts",
@@ -39,7 +49,8 @@
   ],
   "scripts": {
     "build": "bun run build:js && bun run build:types",
-    "build:js": "bun build ./src/index.ts ./src/ibt.ts ./src/live.ts ./src/constants.ts ./src/cli.ts ./src/telemetry-server.ts ./src/types.ts ./src/binary-reader.ts --outdir ./dist --target bun --splitting",
+    "build:js": "bun build ./src/index.ts ./src/ibt.ts ./src/live.ts ./src/constants.ts ./src/cli.ts ./src/telemetry-server.ts ./src/types.ts ./src/binary-reader.ts --outdir ./dist --target bun --splitting && bun run build:neutral",
+    "build:neutral": "bun build ./src/ibt.ts ./src/normalize.ts --outdir ./dist/neutral --target browser --splitting",
     "build:types": "tsc --emitDeclarationOnly --declaration --declarationMap --outDir ./dist",
     "build:server": "bun build ./src/telemetry-server.ts --compile --outfile ./dist/hotlap-telemetry",
     "clean": "rm -rf dist",
@@ -48,6 +59,8 @@
     "server": "bun run src/telemetry-server.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "fixtures:pull": "bun run scripts/fixtures-pull.ts",
+    "gate:deno": "deno run scripts/deno-gate.ts",
     "bench": "bun run bench/parse-ibt.bench.ts",
     "prepublishOnly": "bun run clean && bun run build"
   },
