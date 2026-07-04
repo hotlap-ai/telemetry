@@ -59,6 +59,8 @@
     "server": "bun run src/telemetry-server.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "fixtures:pull": "bun run scripts/fixtures-pull.ts",
+    "gate:deno": "deno run scripts/deno-gate.ts",
     "bench": "bun run bench/parse-ibt.bench.ts",
     "prepublishOnly": "bun run clean && bun run build"
   },

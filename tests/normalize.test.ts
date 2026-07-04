@@ -17,9 +17,11 @@ import { join } from 'node:path';
 import { IBT } from '../src/ibt';
 import { normalizeIbt, type IbtSource, type NormalizedSession } from '../src/normalize';
 
+const FIXTURES_DIR = join(import.meta.dir, 'fixtures', 'files');
 const SAMPLES_DIR =
   process.env.IBT_SAMPLES_DIR ??
-  'C:/Users/sergi/DEV/hotlap.ai/hotlap.ai/UI/public/telemetry';
+  (existsSync(FIXTURES_DIR) ? FIXTURES_DIR
+    : 'C:/Users/sergi/DEV/hotlap.ai/hotlap.ai/UI/public/telemetry');
 
 const FILES = {
   imola: 'acuransxevo22gt3_imola gp 2025-12-22 23-27-46.ibt',
