@@ -1,5 +1,6 @@
 import { parse as parseYaml } from 'yaml';
 import type { Header, VarHeader, TelemetryValue } from './types';
+import type { VarType } from './constants';
 import {
   SIM_STATUS_URL,
   StatusField,
@@ -102,6 +103,47 @@ function ensureFFILoaded(): boolean {
   }
 }
 
+// Pre-compiled regexes for YAML cleaning (allocated once, reused forever)
+const YAML_SPECIAL_FIELDS_REGEX = /((?:DriverSetupName|UserName|TeamName|AbbrevName|Initials): )(.*)/g;
+const YAML_COMMA_VALUE_REGEX = /(\w+: )(,.*)/g;
+
+/**
+ * Fast single-pass YAML cleaning function.
+ * Combines multiple string operations to reduce intermediate allocations.
+ */
+function cleanYamlFast(yaml: string): string {
+  // Single-pass character cleaning using a more efficient approach
+  let cleaned = '';
+  for (let i = 0; i < yaml.length; i++) {
+    const code = yaml.charCodeAt(i);
+    // Skip problematic Windows-1252 characters and non-printable chars
+    if (code === 0x81 || code === 0x8D || code === 0x8F || code === 0x90 || code === 0x9D) {
+      cleaned += ' ';
+    } else if (
+      code === 0x09 || code === 0x0A || code === 0x0D || // Tab, LF, CR
+      (code >= 0x20 && code <= 0x7E) || // Printable ASCII
+      (code >= 0xA0 && code <= 0xFF)    // Extended ASCII
+    ) {
+      cleaned += yaml[i];
+    }
+    // Skip other non-printable characters
+  }
+
+  // Apply field-specific escaping
+  cleaned = cleaned.replace(
+    YAML_SPECIAL_FIELDS_REGEX,
+    (_, prefix, value) => {
+      const escaped = value.replace(/["\\]/g, '\\$&');
+      return `${prefix}"${escaped}"`;
+    }
+  );
+
+  // Handle comma-starting values
+  cleaned = cleaned.replace(YAML_COMMA_VALUE_REGEX, '$1"$2"');
+
+  return cleaned;
+}
+
 export interface IRSDKOptions {
   parseYamlAsync?: boolean;
 }
@@ -117,12 +159,14 @@ export class IRSDK {
   private varHeaders: Map<string, VarHeader> | null = null;
   private varHeadersNames: string[] | null = null;
   private sessionInfoCache: Map<string, { data: unknown; update: number }> = new Map();
+  private static readonly sessionRegexCache = new Map<string, RegExp>();
   private broadcastMsgId: number | null = null;
   private lastSessionInfoUpdate = 0;
   private workaroundConnectedState = 0;
   private frozenBuffer: Uint8Array | null = null;
   private frozenView: DataView | null = null;
   private frozenBufOffset = 0;
+  private frozenBufferCapacity = 0;
   private testMode = false;
   isInitialized = false;
 
@@ -130,13 +174,73 @@ export class IRSDK {
     this.parseYamlAsync = options.parseYamlAsync ?? false;
   }
 
+  // The header parsed at startup is a SNAPSHOT. Fields iRacing keeps
+  // updating (status, sessionInfoUpdate, session-info offset/length, var
+  // buffer tick counts) must be re-read from shared memory on every access,
+  // otherwise the reader is frozen in time: the session-info cache never
+  // invalidates and rosters/results go permanently stale.
+  private liveHeaderInt(byteOffset: number, fallback = 0): number {
+    if (this.testMode) return fallback;
+    return this.sharedMemView ? this.sharedMemView.getInt32(byteOffset, true) : fallback;
+  }
+
+  private get liveStatus(): number {
+    return this.liveHeaderInt(4, this.header?.status ?? 0);
+  }
+
+  /** Tear-safe read target: the second-latest buffer by LIVE tick count. */
+  private liveReadBufOffset(): number {
+    const varBufs = this.header!.varBuf;
+    if (this.testMode || !this.sharedMemView) {
+      return getLatestVarBuffer(varBufs).bufOffset;
+    }
+
+    let latestTick = -1;
+    let latestOffset = varBufs[0]!.bufOffset;
+    let secondTick = -1;
+    let secondOffset = varBufs[0]!.bufOffset;
+    for (let i = 0; i < varBufs.length; i++) {
+      const tick = this.liveHeaderInt(48 + i * 16);
+      const offset = varBufs[i]!.bufOffset;
+      if (tick > latestTick) {
+        secondTick = latestTick;
+        secondOffset = latestOffset;
+        latestTick = tick;
+        latestOffset = offset;
+      } else if (tick > secondTick) {
+        secondTick = tick;
+        secondOffset = offset;
+      }
+    }
+    return varBufs.length > 1 && secondTick >= 0 ? secondOffset : latestOffset;
+  }
+
+  /** Freeze target: the newest buffer by LIVE tick count. */
+  private liveLatestBufOffset(): number {
+    const varBufs = this.header!.varBuf;
+    if (this.testMode || !this.sharedMemView) {
+      return varBufs.reduce((a, b) => (a.tickCount > b.tickCount ? a : b)).bufOffset;
+    }
+
+    let latestTick = -1;
+    let latestOffset = varBufs[0]!.bufOffset;
+    for (let i = 0; i < varBufs.length; i++) {
+      const tick = this.liveHeaderInt(48 + i * 16);
+      if (tick > latestTick) {
+        latestTick = tick;
+        latestOffset = varBufs[i]!.bufOffset;
+      }
+    }
+    return latestOffset;
+  }
+
   get isConnected(): boolean {
     if (!this.header) return false;
 
-    if (this.header.status === StatusField.STATUS_CONNECTED) {
+    if (this.liveStatus === StatusField.STATUS_CONNECTED) {
       this.workaroundConnectedState = 0;
     }
-    if (this.workaroundConnectedState === 0 && this.header.status !== StatusField.STATUS_CONNECTED) {
+    if (this.workaroundConnectedState === 0 && this.liveStatus !== StatusField.STATUS_CONNECTED) {
       this.workaroundConnectedState = 1;
     }
     if (this.workaroundConnectedState === 1 && this.get('SessionNum') === null) {
@@ -148,12 +252,12 @@ export class IRSDK {
 
     return (
       (this.dataValidEvent !== null || this.testMode) &&
-      (this.header.status === StatusField.STATUS_CONNECTED || this.workaroundConnectedState === 3)
+      (this.liveStatus === StatusField.STATUS_CONNECTED || this.workaroundConnectedState === 3)
     );
   }
 
   get sessionInfoUpdate(): number {
-    return this.header?.sessionInfoUpdate ?? 0;
+    return this.liveHeaderInt(12, this.header?.sessionInfoUpdate ?? 0);
   }
 
   get varHeaderNames(): string[] | null {
@@ -292,32 +396,168 @@ export class IRSDK {
       return this.getSessionInfo(key);
     }
 
-    const view = this.frozenView ?? this.sharedMemView;
+    const isFrozen = this.isFrozen;
+    const view = isFrozen ? this.frozenView : this.sharedMemView;
     if (!view) return null;
 
-    const varBuf = this.frozenView ? { bufOffset: this.frozenBufOffset } : getLatestVarBuffer(this.header.varBuf);
-    const offset = varBuf.bufOffset + varHeader.offset;
+    const bufOffset = isFrozen ? this.frozenBufOffset : this.liveReadBufOffset();
+    return readVarValue(view, bufOffset + varHeader.offset, varHeader.type, varHeader.count);
+  }
 
-    return readVarValue(view, offset, varHeader.type, varHeader.count);
+  /**
+   * Batch read multiple telemetry variables in a single pass.
+   * Much more efficient than calling get() multiple times.
+   * @param keys Array of variable names to read
+   * @returns Map of variable names to their values
+   */
+  getMultiple(keys: string[]): Map<string, TelemetryValue> {
+    const results = new Map<string, TelemetryValue>();
+    if (!this.header || !this.varHeaders) return results;
+
+    const isFrozen = this.isFrozen;
+    const view = isFrozen ? this.frozenView : this.sharedMemView;
+    if (!view) return results;
+
+    const bufOffset = isFrozen
+      ? this.frozenBufOffset
+      : this.liveReadBufOffset();
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i]!;
+      const varHeader = this.varHeaders.get(key);
+      if (varHeader) {
+        results.set(key, readVarValue(view, bufOffset + varHeader.offset, varHeader.type, varHeader.count));
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Batch read multiple telemetry variables into a pre-allocated object.
+   * Zero allocation in the hot path - fastest option for real-time telemetry.
+   * @param keys Array of variable names to read
+   * @param out Pre-allocated object to write values into
+   */
+  getMultipleInto<T extends Record<string, TelemetryValue | null>>(keys: string[], out: T): T {
+    if (!this.header || !this.varHeaders) {
+      for (let i = 0; i < keys.length; i++) {
+        (out as Record<string, TelemetryValue | null>)[keys[i]!] = null;
+      }
+      return out;
+    }
+
+    const isFrozen = this.isFrozen;
+    const view = isFrozen ? this.frozenView : this.sharedMemView;
+    if (!view) return out;
+
+    const bufOffset = isFrozen
+      ? this.frozenBufOffset
+      : this.liveReadBufOffset();
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i]!;
+      const varHeader = this.varHeaders.get(key);
+      if (varHeader) {
+        (out as Record<string, TelemetryValue | null>)[key] = readVarValue(view, bufOffset + varHeader.offset, varHeader.type, varHeader.count);
+      } else {
+        (out as Record<string, TelemetryValue | null>)[key] = null;
+      }
+    }
+
+    return out;
+  }
+
+  /**
+   * Creates a pre-compiled reader for maximum performance in hot loops.
+   * Pre-computes all offsets at creation time, avoiding Map lookups during reads.
+   * @param keys Array of variable names to read
+   * @returns A reader object with a read() method that returns values as an array
+   */
+  createReader(keys: string[]): { read: () => (TelemetryValue | null)[], keys: string[] } {
+    if (!this.header || !this.varHeaders) {
+      return {
+        read: () => keys.map(() => null),
+        keys
+      };
+    }
+
+    // Pre-compute all variable info at creation time
+    const varInfos: Array<{ offset: number; type: number; count: number } | null> = new Array(keys.length);
+    for (let i = 0; i < keys.length; i++) {
+      const varHeader = this.varHeaders.get(keys[i]!);
+      if (varHeader) {
+        varInfos[i] = { offset: varHeader.offset, type: varHeader.type, count: varHeader.count };
+      } else {
+        varInfos[i] = null;
+      }
+    }
+
+    const self = this;
+    const results: (TelemetryValue | null)[] = new Array(keys.length);
+
+    return {
+      keys,
+      read(): (TelemetryValue | null)[] {
+        if (!self.header) {
+          for (let i = 0; i < keys.length; i++) results[i] = null;
+          return results;
+        }
+
+        const isFrozen = self.isFrozen;
+        const view = isFrozen ? self.frozenView : self.sharedMemView;
+        if (!view) {
+          for (let i = 0; i < keys.length; i++) results[i] = null;
+          return results;
+        }
+
+        const bufOffset = isFrozen
+          ? self.frozenBufOffset
+          : self.liveReadBufOffset();
+
+        for (let i = 0; i < varInfos.length; i++) {
+          const info = varInfos[i];
+          if (info) {
+            results[i] = readVarValue(view, bufOffset + info.offset, info.type as VarType, info.count);
+          } else {
+            results[i] = null;
+          }
+        }
+
+        return results;
+      }
+    };
   }
 
   freezeVarBufferLatest(): void {
-    this.unfreezeVarBufferLatest();
-
     if (!this.header || !this.sharedMemBuffer) return;
 
     this.waitValidDataEvent();
-    const varBuf = this.header.varBuf.reduce((a, b) => (a.tickCount > b.tickCount ? a : b));
+    const latestBufOffset = this.liveLatestBufOffset();
+    const bufLen = this.header.bufLen;
 
+    // Pre-allocate or reuse frozen buffer to avoid allocations in hot path
+    if (!this.frozenBuffer || this.frozenBufferCapacity < bufLen) {
+      this.frozenBuffer = new Uint8Array(bufLen);
+      this.frozenBufferCapacity = bufLen;
+      this.frozenView = new DataView(this.frozenBuffer.buffer);
+    }
+
+    // Copy data into pre-allocated buffer (much faster than slice)
+    this.frozenBuffer.set(
+      new Uint8Array(this.sharedMemBuffer.buffer, latestBufOffset, bufLen)
+    );
     this.frozenBufOffset = 0;
-    this.frozenBuffer = this.sharedMemBuffer.slice(varBuf.bufOffset, varBuf.bufOffset + this.header.bufLen);
-    this.frozenView = new DataView(this.frozenBuffer.buffer);
   }
 
   unfreezeVarBufferLatest(): void {
-    this.frozenBuffer = null;
-    this.frozenView = null;
-    this.frozenBufOffset = 0;
+    // Don't null out frozenBuffer/frozenView - keep them for reuse
+    // Just reset the offset to indicate we're not frozen
+    this.frozenBufOffset = -1;
+  }
+
+  private get isFrozen(): boolean {
+    return this.frozenBufOffset >= 0 && this.frozenView !== null;
   }
 
   private async checkSimStatus(): Promise<boolean> {
@@ -338,11 +578,21 @@ export class IRSDK {
     return true;
   }
 
+  private static getSectionRegex(key: string): RegExp {
+    let regex = IRSDK.sessionRegexCache.get(key);
+    if (!regex) {
+      regex = new RegExp(`\n${key}:\n([\\s\\S]*?)(?=\n\n|$)`);
+      IRSDK.sessionRegexCache.set(key, regex);
+    }
+    return regex;
+  }
+
   getSessionInfo<T = unknown>(key: string): T | null {
     if (!this.header || !this.sharedMemBuffer) return null;
 
-    if (this.lastSessionInfoUpdate < this.header.sessionInfoUpdate) {
-      this.lastSessionInfoUpdate = this.header.sessionInfoUpdate;
+    // Live counter — iRacing bumps it on roster/results/session changes.
+    if (this.lastSessionInfoUpdate !== this.sessionInfoUpdate) {
+      this.lastSessionInfoUpdate = this.sessionInfoUpdate;
       for (const [k, v] of this.sessionInfoCache) {
         if (v.data) {
           this.sessionInfoCache.set(k, { ...v, data: null });
@@ -355,16 +605,17 @@ export class IRSDK {
       return cached.data as T;
     }
 
-    const start = this.header.sessionInfoOffset;
-    const len = this.header.sessionInfoLen;
+    // Offset/length move as the YAML grows — read them live too.
+    const start = this.liveHeaderInt(20, this.header.sessionInfoOffset);
+    const len = this.liveHeaderInt(16, this.header.sessionInfoLen);
     const raw = readString(this.sharedMemBuffer, start, len);
 
-    const sectionMatch = raw.match(new RegExp(`\n${key}:\n([\\s\\S]*?)(?=\n\n|$)`));
+    const sectionMatch = raw.match(IRSDK.getSectionRegex(key));
     if (!sectionMatch) return null;
 
     try {
       const sectionYaml = `${key}:\n${sectionMatch[1]}`;
-      const cleaned = this.cleanYaml(sectionYaml);
+      const cleaned = cleanYamlFast(sectionYaml);
       const parsed = parseYaml(cleaned);
       const result = parsed?.[key] ?? null;
       this.sessionInfoCache.set(key, { data: result, update: this.lastSessionInfoUpdate });
@@ -372,24 +623,6 @@ export class IRSDK {
     } catch {
       return null;
     }
-  }
-
-  private cleanYaml(yaml: string): string {
-    let cleaned = yaml
-      .replace(/[\x81\x8D\x8F\x90\x9D]/g, ' ')
-      .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g, '');
-
-    cleaned = cleaned.replace(
-      /((?:DriverSetupName|UserName|TeamName|AbbrevName|Initials): )(.*)/g,
-      (_, prefix, value) => {
-        const escaped = value.replace(/["\\]/g, '\\$&');
-        return `${prefix}"${escaped}"`;
-      }
-    );
-
-    cleaned = cleaned.replace(/(\w+: )(,.*)/g, '$1"$2"');
-
-    return cleaned;
   }
 
   private getBroadcastMsgId(): number {

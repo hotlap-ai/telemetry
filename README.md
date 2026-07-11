@@ -7,7 +7,9 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.0.0-black.svg)](https://bun.sh/)
 
-High-performance iRacing telemetry SDK for [Bun](https://bun.sh). Parse IBT telemetry files and stream live data from iRacing via Windows shared memory.
+High-performance iRacing telemetry library for [Bun](https://bun.sh), built by the [HotLap.ai](https://hotlap.ai) team. Parse IBT telemetry files and stream live data from iRacing via Windows shared memory.
+
+> **Note:** This is an unofficial community library, not affiliated with or endorsed by iRacing.com.
 
 ## Features
 
@@ -193,7 +195,7 @@ ir.pitCommand(pitCommandMode, variable);
 | `OilTemp` | float | Oil temperature (C) |
 | `WaterTemp` | float | Water temperature (C) |
 
-See iRacing SDK documentation for the complete list of variables.
+See [iRacing documentation](https://www.iracing.com/) for the complete list of variables.
 
 ## Scripts
 

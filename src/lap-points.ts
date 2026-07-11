@@ -39,6 +39,12 @@ export interface LapPoint {
   lat: number | null;
   lon: number | null;
   altitudeM: number | null;
+  /** Lateral acceleration in m/s² (iRacing LatAccel). Added in 1.4.0. */
+  latAccelMs2: number | null;
+  /** Longitudinal acceleration in m/s² (iRacing LongAccel). Added in 1.4.0. */
+  longAccelMs2: number | null;
+  /** Yaw rate in deg/s (iRacing YawRate rad/s → deg/s). Added in 1.4.0. */
+  yawRateDegS: number | null;
   tireTempLF: number | null;
   tireTempRF: number | null;
   tireTempLR: number | null;
@@ -147,6 +153,9 @@ export function extractLapPoints(
   const latArr = channel(source, 'Lat');
   const lonArr = channel(source, 'Lon');
   const altArr = channel(source, 'Alt');
+  const latAccelArr = channel(source, 'LatAccel');
+  const longAccelArr = channel(source, 'LongAccel');
+  const yawRateArr = channel(source, 'YawRate');
 
   // Surface temp first, carcass fallback — process-job behavior.
   const tempLF = channelWithFallback(source, 'LFtempM', 'LFtempCM');
@@ -205,6 +214,7 @@ export function extractLapPoints(
     const throttle = readNum(throttleArr, i);
     const brake = readNum(brakeArr, i);
     const steerRad = readNum(steerArr, i);
+    const yawRateRad = readNum(yawRateArr, i);
     const wLF = readNum(wearLF, i);
     const wRF = readNum(wearRF, i);
     const wLR = readNum(wearLR, i);
@@ -223,6 +233,9 @@ export function extractLapPoints(
       lat: readNum(latArr, i),
       lon: readNum(lonArr, i),
       altitudeM: readNum(altArr, i),
+      latAccelMs2: readNum(latAccelArr, i),
+      longAccelMs2: readNum(longAccelArr, i),
+      yawRateDegS: yawRateRad != null ? (yawRateRad * 180) / Math.PI : null, // rad/s → deg/s
       tireTempLF: readNum(tempLF, i),
       tireTempRF: readNum(tempRF, i),
       tireTempLR: readNum(tempLR, i),
