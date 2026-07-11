@@ -27,7 +27,7 @@ const { values, positionals } = parseArgs({
 
 function printHelp(): void {
   console.log(`
-Bun iRacing SDK v${VERSION}
+HotLap.ai Telemetry CLI v${VERSION}
 
 Usage: irsdk [options] [file.ibt]
 
@@ -59,7 +59,7 @@ Examples:
 
 async function main(): Promise<void> {
   if (values.version) {
-    console.log(`Bun iRacing SDK v${VERSION}`);
+    console.log(`HotLap.ai Telemetry CLI v${VERSION}`);
     return;
   }
 

@@ -1,6 +1,6 @@
-# Contributing to @hotlap/telemetry
+# Contributing to @hotlap.ai/telemetry
 
-Thank you for your interest in contributing to the HotLap.ai telemetry SDK!
+Thank you for your interest in contributing to the HotLap.ai telemetry library!
 
 ## Getting Started
 
@@ -52,7 +52,7 @@ bun run typecheck
 src/
   binary-reader.ts  # Low-level binary parsing utilities
   cli.ts            # Command-line interface
-  constants.ts      # iRacing SDK constants and enums
+  constants.ts      # iRacing telemetry constants and enums
   ibt.ts            # IBT file parser
   index.ts          # Main exports
   live.ts           # Live telemetry via Windows FFI
