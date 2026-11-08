@@ -6,6 +6,7 @@ import {
   normalizeLmuRecording,
   parseRecordingTime,
   sessionInfo,
+  streamLmuRecording,
   unwrapLapDist,
   type LmuRecordingData,
 } from "../src/lmu/normalize"
@@ -294,5 +295,22 @@ describe("normalizeLmuRecording: lap verdicts (flags)", () => {
     const lap = normalizeLmuRecording(fast).laps[0]!
     expect(lap.lapTimeSec).toBe(30)
     expect(lap.flags).toContain("unrealistic-speed")
+  })
+})
+
+describe("streamLmuRecording", () => {
+  test("yields the same laps one at a time, with the session known up front", () => {
+    const stream = streamLmuRecording(session.recording)
+    expect(stream.session).toEqual(result.session)
+    const first = stream.laps.next()
+    expect(first.done).toBe(false)
+    expect(first.value).toEqual(result.laps[0])
+    expect([first.value, ...stream.laps]).toEqual(result.laps)
+  })
+
+  test("recording-level problems throw before any lap is produced", () => {
+    const noGps = structuredClone(session.recording) as LmuRecordingData
+    delete noGps.channels["GPS Time"]
+    expect(() => streamLmuRecording(noGps)).toThrow(LmuParseError)
   })
 })
