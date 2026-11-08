@@ -93,6 +93,8 @@ export interface LmuLap {
   lapTimeSec: number
   distanceKm: number
   points: number
+  /** Full-resolution samples in the lap before downsampling. */
+  downsampledFrom: number
   sectorTimes: LmuSectorTime[]
   /** Always 0: an LMU recording holds one session. */
   sessionNum: number
@@ -402,6 +404,7 @@ export function streamLmuRecording(rec: LmuRecordingData, options: NormalizeOpti
         lapTimeSec,
         distanceKm,
         points: byTime.length,
+        downsampledFrom: full.length,
         sectorTimes,
         sessionNum: 0,
         sessionType: rec.metadata.SessionType || undefined,
