@@ -1,4 +1,5 @@
 import type { LapPoint } from "../lap-points"
+import type { LapFlag } from "../normalize"
 
 /**
  * Le Mans Ultimate recording → HotLap.ai laps.
@@ -33,11 +34,14 @@ import type { LapPoint } from "../lap-points"
  * becomes null in the points.
  */
 
+/** A numeric column: plain arrays from a DuckDB host, typed arrays from a bundle. */
+export type LmuNumberColumn = ArrayLike<number>
+
 export interface LmuChannelData {
   frequency: number
   unit: string
   columnNames: string[]
-  columns: number[][]
+  columns: LmuNumberColumn[]
 }
 
 export interface LmuEventData {
@@ -93,7 +97,13 @@ export interface LmuLap {
   /** Always 0: an LMU recording holds one session. */
   sessionNum: number
   sessionType?: string
-  /** Official LMU lap time present and no pit visit during the lap. */
+  /** Always true: a lap is only emitted once both line crossings are recorded. */
+  completed: boolean
+  /** Lap Dist covered / layout length, as a fraction (null when the length is unknown). */
+  completionPct: number | null
+  /** Why the lap is not clean; empty for a clean lap. Same vocabulary as normalizeIbt. */
+  flags: LapFlag[]
+  /** No flags: official time, no pit visit, full length, realistic speed. */
   isClean: boolean
   /** LMU's own lap counter at the start of the lap. */
   lmuLapCounter: number
@@ -137,6 +147,16 @@ const OFFICIAL_TIME_MISMATCH_S = 1
 /** A lap this far off the layout length is not clean (Lap Dist glitch, teleport, cut). */
 const LAP_LENGTH_TOLERANCE = 0.05
 const MIN_LAP_POINTS = 10
+
+/** Lap verdict thresholds (the iRacing equivalents live in NORMALIZE_THRESHOLDS). */
+export const LMU_THRESHOLDS = {
+  /** Below this fraction of the layout length: 'low-completion'. */
+  MIN_COMPLETION_PCT: 0.98,
+  /** Above this fraction (Lap Dist glitch, teleport, cut): 'distance-mismatch'. */
+  MAX_COMPLETION_PCT: 1 + LAP_LENGTH_TOLERANCE,
+  /** Average speed above this: 'unrealistic-speed' (Le Mans Hypercar is about 240). */
+  MAX_AVG_SPEED_KMH: 260,
+} as const
 const DEFAULT_MAX_POINTS = 1000
 
 /** The only tables the normalizer reads; pass these to readLmuTables to skip the rest. */
@@ -340,8 +360,16 @@ export function normalizeLmuRecording(rec: LmuRecordingData, options: NormalizeO
     lastLapNumber = lapNumber
     const lengthM = maxDist - minDist
     const lengthOk = trackLengthM == null || Math.abs(lengthM - trackLengthM) <= trackLengthM * LAP_LENGTH_TOLERANCE
-    const isClean = official > 0 && !inPits && lengthOk
-    if (isClean) completedLengthsM.push(lengthM)
+    const completionPct = trackLengthM != null && trackLengthM > 0 ? round(lengthM / trackLengthM, 4) : null
+    const flags: LapFlag[] = []
+    if (!(official > 0)) flags.push("no-lap-last-time")
+    if (inPits) flags.push("pit-lane")
+    if (completionPct != null && completionPct < LMU_THRESHOLDS.MIN_COMPLETION_PCT) flags.push("low-completion")
+    if (completionPct != null && completionPct > LMU_THRESHOLDS.MAX_COMPLETION_PCT) flags.push("distance-mismatch")
+    const avgKmh = ((trackLengthM ?? lengthM) / 1000 / lapTimeSec) * 3600
+    if (avgKmh > LMU_THRESHOLDS.MAX_AVG_SPEED_KMH) flags.push("unrealistic-speed")
+    const isClean = flags.length === 0
+    if (official > 0 && !inPits && lengthOk) completedLengthsM.push(lengthM)
 
     const byDist = downsample([...full].sort((a, b) => a.distanceKm - b.distanceKm), maxPoints)
     const byTime = downsample(full, maxPoints) // already in time order
@@ -355,6 +383,9 @@ export function normalizeLmuRecording(rec: LmuRecordingData, options: NormalizeO
       sectorTimes,
       sessionNum: 0,
       sessionType: rec.metadata.SessionType || undefined,
+      completed: true,
+      completionPct,
+      flags,
       isClean,
       lmuLapCounter: counterValue,
       inPits,
@@ -458,7 +489,7 @@ function lapSectors(input: SectorInput): LmuSectorTime[] {
  * wrap when the value stays low for the following sample too, so a
  * one-sample glitch to 0 is not mistaken for a line crossing.
  */
-export function estimateTrackLengthM(values: number[]): number | null {
+export function estimateTrackLengthM(values: LmuNumberColumn): number | null {
   const peaks: number[] = []
   let max = -Infinity
   for (let i = 0; i < values.length; i++) {
@@ -483,7 +514,7 @@ export function estimateTrackLengthM(values: number[]): number | null {
  * that sticks is a wrap (downwards) or a reposition (upwards, e.g. reset to
  * the pits) and is followed.
  */
-export function unwrapLapDist(values: number[], trackLengthM: number | null): number[] {
+export function unwrapLapDist(values: LmuNumberColumn, trackLengthM: number | null): number[] {
   const out = new Array<number>(values.length)
   const half = trackLengthM ? trackLengthM / 2 : null
   let offset = 0
@@ -508,7 +539,7 @@ export function unwrapLapDist(values: number[], trackLengthM: number | null): nu
   return out
 }
 
-function nextFinite(values: number[], from: number): { index: number; value: number } | null {
+function nextFinite(values: LmuNumberColumn, from: number): { index: number; value: number } | null {
   for (let i = from; i < values.length; i++) {
     const v = values[i]!
     if (Number.isFinite(v)) return { index: i, value: v }
@@ -521,7 +552,7 @@ function nextFinite(values: number[], from: number): { index: number; value: num
 
 /** Linear interpolation of a fixed-rate channel at master sample index i. */
 class Sampler {
-  constructor(private readonly values: number[], private readonly ratio: number) {}
+  constructor(private readonly values: LmuNumberColumn, private readonly ratio: number) {}
 
   at(masterIndex: number): number | null {
     const pos = masterIndex * this.ratio
@@ -603,7 +634,12 @@ function percentScale(ch: LmuChannelData | undefined): number {
   if (!ch) return 1
   if (ch.unit.includes("%")) return 1
   let maxAbs = 0
-  for (const v of ch.columns.flat()) if (Number.isFinite(v) && Math.abs(v) > maxAbs) maxAbs = Math.abs(v)
+  for (const col of ch.columns) {
+    for (let i = 0; i < col.length; i++) {
+      const v = col[i]!
+      if (Number.isFinite(v) && Math.abs(v) > maxAbs) maxAbs = Math.abs(v)
+    }
+  }
   return maxAbs <= 1.0001 ? 100 : 1
 }
 
@@ -635,7 +671,7 @@ function finite(v: number | undefined): number | null {
 }
 
 /** First index with arr[i] >= x (arr ascending). */
-function lowerBound(arr: number[], x: number): number {
+function lowerBound(arr: LmuNumberColumn, x: number): number {
   let lo = 0
   let hi = arr.length
   while (lo < hi) {
@@ -647,7 +683,7 @@ function lowerBound(arr: number[], x: number): number {
 }
 
 /** First index with arr[i] > x (arr ascending). */
-function upperBound(arr: number[], x: number): number {
+function upperBound(arr: LmuNumberColumn, x: number): number {
   let lo = 0
   let hi = arr.length
   while (lo < hi) {

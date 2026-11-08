@@ -28,7 +28,7 @@ function fakeSource(opts: {
     async queryRows(sql) {
       queries.push(sql)
       if (sql.includes("duckdb_tables()")) return [...names].map((table_name) => ({ table_name }))
-      if (sql.includes("FROM metadata")) return Object.entries(opts.metadata ?? {}).map(([key, value]) => ({ key, value }))
+      if (sql.includes('FROM "metadata"')) return Object.entries(opts.metadata ?? {}).map(([key, value]) => ({ key, value }))
       if (sql.includes('"channelsList"')) return opts.channelsList ?? []
       if (sql.includes('"eventsList"')) return opts.eventsList ?? []
       throw new Error(`unexpected query: ${sql}`)

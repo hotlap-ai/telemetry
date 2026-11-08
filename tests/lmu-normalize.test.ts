@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  LMU_THRESHOLDS,
   LmuParseError,
   estimateTrackLengthM,
   normalizeLmuRecording,
@@ -249,5 +250,49 @@ describe("normalizeLmuRecording: robustness (review findings)", () => {
     expect(out.laps.find((l) => l.lmuLapCounter === 2)).toBeUndefined()
     expect(out.laps.map((l) => l.lmuLapCounter)).toEqual([3, 4])
     expect(out.laps.every((l) => l.distanceKm / out.session.trackLengthKm! > 0.98)).toBe(true)
+  })
+})
+
+describe("normalizeLmuRecording: lap verdicts (flags)", () => {
+  test("clean laps have no flags and a full completion fraction; the invalidated lap says why", () => {
+    expect(result.laps.map((l) => l.flags)).toEqual([[], ["no-lap-last-time"], []])
+    for (const lap of result.laps) {
+      expect(lap.completed).toBe(true)
+      expect(lap.isClean).toBe(lap.flags.length === 0)
+      // A fraction, like laps.completion_pct for iRacing (not a percentage).
+      expect(lap.completionPct!).toBeGreaterThan(0.99)
+      expect(lap.completionPct!).toBeLessThanOrEqual(1.001)
+    }
+  })
+
+  test("a pit visit during the lap is 'pit-lane'", () => {
+    const pitted = structuredClone(session.recording) as LmuRecordingData
+    const mid = (crossings[2]! + crossings[3]!) / 2
+    pitted.events["In Pits"]!.rows.push([mid, 1], [mid + 5, 0])
+    pitted.events["In Pits"]!.rows.sort((a, b) => a[0] - b[0])
+    const out = normalizeLmuRecording(pitted)
+    expect(out.laps[2]!.flags).toEqual(["pit-lane"])
+    expect(out.laps[2]!.isClean).toBe(false)
+  })
+
+  test("a lap far over the layout length is 'distance-mismatch'", () => {
+    const stretched = structuredClone(session.recording) as LmuRecordingData
+    const dist = stretched.channels["Lap Dist"]!.columns[0]!
+    const t0 = session.recording.channels["GPS Time"]!.columns[0]![0]!
+    const from = Math.round((crossings[2]! - t0 + 30) * 10)
+    const to = Math.round((crossings[3]! - t0) * 10)
+    for (let i = from; i < to; i++) dist[i] = dist[i]! + 500
+    const lap = normalizeLmuRecording(stretched).laps[2]!
+    expect(lap.completionPct!).toBeGreaterThan(LMU_THRESHOLDS.MAX_COMPLETION_PCT)
+    expect(lap.flags).toContain("distance-mismatch")
+  })
+
+  test("an official time implying more than 260 km/h is 'unrealistic-speed'", () => {
+    const fast = structuredClone(session.recording) as LmuRecordingData
+    // 2.9 km in 30 s = 348 km/h.
+    fast.events["Lap Time"]!.rows = fast.events["Lap Time"]!.rows.map(([ts, v], i) => [ts, i === 0 ? 30 : v] as [number, number | string])
+    const lap = normalizeLmuRecording(fast).laps[0]!
+    expect(lap.lapTimeSec).toBe(30)
+    expect(lap.flags).toContain("unrealistic-speed")
   })
 })
