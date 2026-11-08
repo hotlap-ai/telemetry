@@ -1,7 +1,7 @@
-import type { LmuRecordingData } from "../../src/lmu/normalize"
+import type { LmuRecordingData } from "./normalize"
 
 /**
- * A realistic synthetic LMU session, simulated at 100 Hz on a 2.9 km layout
+ * Test helper for consumers (`@hotlap.ai/telemetry/lmu/testing`): a realistic synthetic LMU session, simulated at 100 Hz on a 2.9 km layout
  * (short enough to catch the 3 km default-length bug), with the table shapes
  * LMU writes:
  *
@@ -32,9 +32,11 @@ export interface SyntheticSession {
   }
 }
 
-interface SimOptions {
+export interface SimOptions {
   /** Seconds slower per lap, per lap index (1-based); default all equal. */
   lapPace?: Record<number, number>
+  /** Timed laps after the out-lap (default 3); one more in-lap is cut off. */
+  laps?: number
 }
 
 export function buildSyntheticSession(opts: SimOptions = {}): SyntheticSession {
@@ -86,6 +88,7 @@ export function buildSyntheticSession(opts: SimOptions = {}): SyntheticSession {
   let sample = 0
   let wear = 1
 
+  const lastLap = (opts.laps ?? 3) + 1
   const pace = (lap: number) => 1 + (opts.lapPace?.[lap] ?? (lap === 3 ? -0.01 : 0))
 
   while (true) {
@@ -131,11 +134,11 @@ export function buildSyntheticSession(opts: SimOptions = {}): SyntheticSession {
       sector = 0
     }
     // Lap 4: pit entry 400 m before the line, recording stops 100 m later.
-    if (lapIndex === 4 && !inPits && s >= L - 400) {
+    if (lapIndex === lastLap && !inPits && s >= L - 400) {
       inPits = 1
       pitEvents.push([t, 1])
     }
-    if (lapIndex === 4 && s >= L - 300) break
+    if (lapIndex === lastLap && s >= L - 300) break
 
     const nextGear = Math.min(6, Math.max(2, Math.round(kmh / 40)))
     if (nextGear !== gear) {

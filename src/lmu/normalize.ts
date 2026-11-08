@@ -1,4 +1,5 @@
 import type { LapPoint } from "../lap-points"
+import type { LapFlag } from "../normalize"
 
 /**
  * Le Mans Ultimate recording → HotLap.ai laps.
@@ -33,11 +34,14 @@ import type { LapPoint } from "../lap-points"
  * becomes null in the points.
  */
 
+/** A numeric column: plain arrays from a DuckDB host, typed arrays from a bundle. */
+export type LmuNumberColumn = ArrayLike<number>
+
 export interface LmuChannelData {
   frequency: number
   unit: string
   columnNames: string[]
-  columns: number[][]
+  columns: LmuNumberColumn[]
 }
 
 export interface LmuEventData {
@@ -89,11 +93,19 @@ export interface LmuLap {
   lapTimeSec: number
   distanceKm: number
   points: number
+  /** Full-resolution samples in the lap before downsampling. */
+  downsampledFrom: number
   sectorTimes: LmuSectorTime[]
   /** Always 0: an LMU recording holds one session. */
   sessionNum: number
   sessionType?: string
-  /** Official LMU lap time present and no pit visit during the lap. */
+  /** Always true: a lap is only emitted once both line crossings are recorded. */
+  completed: boolean
+  /** Lap Dist covered / layout length, as a fraction (null when the length is unknown). */
+  completionPct: number | null
+  /** Why the lap is not clean; empty for a clean lap. Same vocabulary as normalizeIbt. */
+  flags: LapFlag[]
+  /** No flags: official time, no pit visit, full length, realistic speed. */
   isClean: boolean
   /** LMU's own lap counter at the start of the lap. */
   lmuLapCounter: number
@@ -137,6 +149,16 @@ const OFFICIAL_TIME_MISMATCH_S = 1
 /** A lap this far off the layout length is not clean (Lap Dist glitch, teleport, cut). */
 const LAP_LENGTH_TOLERANCE = 0.05
 const MIN_LAP_POINTS = 10
+
+/** Lap verdict thresholds (the iRacing equivalents live in NORMALIZE_THRESHOLDS). */
+export const LMU_THRESHOLDS = {
+  /** Below this fraction of the layout length: 'low-completion'. */
+  MIN_COMPLETION_PCT: 0.98,
+  /** Above this fraction (Lap Dist glitch, teleport, cut): 'distance-mismatch'. */
+  MAX_COMPLETION_PCT: 1 + LAP_LENGTH_TOLERANCE,
+  /** Average speed above this: 'unrealistic-speed' (Le Mans Hypercar is about 240). */
+  MAX_AVG_SPEED_KMH: 260,
+} as const
 const DEFAULT_MAX_POINTS = 1000
 
 /** The only tables the normalizer reads; pass these to readLmuTables to skip the rest. */
@@ -168,7 +190,27 @@ export const LMU_EVENTS_USED = [
   "In Pits",
 ] as const
 
+/**
+ * Laps one at a time, for hosts that store each lap as it is produced instead
+ * of holding a whole race in memory (a server inside a 256 MB isolate).
+ * `session` is complete up front, except that `trackLengthKm` is filled in
+ * after the last lap when the recording has no line-crossing peaks to measure
+ * the layout from. Errors about the recording as a whole throw immediately.
+ */
+export interface LmuRecordingStream {
+  session: LmuSessionInfo
+  /** Optional channels that were missing or unusable. */
+  warnings: string[]
+  laps: Generator<LmuLap, void, undefined>
+}
+
 export function normalizeLmuRecording(rec: LmuRecordingData, options: NormalizeOptions = {}): NormalizedLmuRecording {
+  const stream = streamLmuRecording(rec, options)
+  const laps = [...stream.laps]
+  return { session: stream.session, laps, warnings: stream.warnings }
+}
+
+export function streamLmuRecording(rec: LmuRecordingData, options: NormalizeOptions = {}): LmuRecordingStream {
   const maxPoints = Math.max(MIN_LAP_POINTS, Math.floor(options.maxPoints ?? DEFAULT_MAX_POINTS))
   const warnings: string[] = []
 
@@ -237,139 +279,152 @@ export function normalizeLmuRecording(rec: LmuRecordingData, options: NormalizeO
   if (gearEvents.length === 0) warnings.push("Gear")
 
   const recordingEnd = times[masterCount - 1]!
-  const laps: LmuLap[] = []
-  const completedLengthsM: number[] = []
-  let lastLapNumber = 0
+  const session = sessionInfo(rec.metadata, trackLengthM != null ? trackLengthM / 1000 : null)
 
-  for (let k = 0; k < lapEvents.length - 1; k++) {
-    const counter = lapEvents[k]!
-    const finish = lapEvents[k + 1]!
-    if (finish.ts > recordingEnd + EVENT_MATCH_TOLERANCE_S) continue // cut off at the end
+  function* laps(): Generator<LmuLap, void, undefined> {
+    const completedLengthsM: number[] = []
+    let lastLapNumber = 0
 
-    const nextLapTs = lapEvents[k + 2]?.ts ?? Infinity
-    const atFinish = (events: TimedValue[]) => valueAtFinish(events, finish.ts, nextLapTs)
-    const official = atFinish(lapTimeEvents)
-    const counterValue = Math.round(counter.value)
-    // Out-lap (practice, counter 0): no official time, skipped.
-    if (counterValue === 0 && !(official > 0)) continue
-    let startTs = counter.ts
-    if (official > 0 && Math.abs(finish.ts - counter.ts - official) > OFFICIAL_TIME_MISMATCH_S) {
-      // The Lap row isn't where the lap started: counter 0 in a race also
-      // covers the formation lap, and a recording switched on mid-lap starts
-      // with an initial-state row. LMU's own time says where it began.
-      startTs = finish.ts - official
-    }
-    if (startTs < times[0]! - EVENT_MATCH_TOLERANCE_S) continue // began before the recording
+    for (let k = 0; k < lapEvents.length - 1; k++) {
+      const counter = lapEvents[k]!
+      const finish = lapEvents[k + 1]!
+      if (finish.ts > recordingEnd + EVENT_MATCH_TOLERANCE_S) continue // cut off at the end
 
-    const startIdx = lowerBound(times, startTs)
-    const endIdx = Math.min(masterCount - 1, upperBound(times, finish.ts) - 1)
-    if (endIdx - startIdx + 1 < MIN_LAP_POINTS) continue
+      const nextLapTs = lapEvents[k + 2]?.ts ?? Infinity
+      const atFinish = (events: TimedValue[]) => valueAtFinish(events, finish.ts, nextLapTs)
+      const official = atFinish(lapTimeEvents)
+      const counterValue = Math.round(counter.value)
+      // Out-lap (practice, counter 0): no official time, skipped.
+      if (counterValue === 0 && !(official > 0)) continue
+      let startTs = counter.ts
+      if (official > 0 && Math.abs(finish.ts - counter.ts - official) > OFFICIAL_TIME_MISMATCH_S) {
+        // The Lap row isn't where the lap started: counter 0 in a race also
+        // covers the formation lap, and a recording switched on mid-lap starts
+        // with an initial-state row. LMU's own time says where it began.
+        startTs = finish.ts - official
+      }
+      if (startTs < times[0]! - EVENT_MATCH_TOLERANCE_S) continue // began before the recording
 
-    const inPits = stepValue(pitEvents, startTs + 0.01) > 0 || pitEvents.some((e) => e.value > 0 && e.ts > startTs && e.ts < finish.ts)
-    const lapTimeSec = official > 0 ? official : finish.ts - startTs
-    if (!(lapTimeSec > 0)) continue
+      const startIdx = lowerBound(times, startTs)
+      const endIdx = Math.min(masterCount - 1, upperBound(times, finish.ts) - 1)
+      if (endIdx - startIdx + 1 < MIN_LAP_POINTS) continue
 
-    // Full-resolution points over the master timeline.
-    const startTime = times[startIdx]!
-    let minDist = Infinity
-    let maxDist = -Infinity
-    const full: LapPoint[] = []
-    const gearCursor = new EventCursor(gearEvents)
-    const absCursor = new EventCursor(absEvents)
-    for (let i = startIdx; i <= endIdx; i++) {
-      const t = times[i]!
-      const d = lapDist.at(i)
-      if (d == null || !Number.isFinite(t)) continue
-      if (d < minDist) minDist = d
-      if (d > maxDist) maxDist = d
-      const steer = steering?.sampler.at(i) ?? null
-      const latG = lateralG?.at(i) ?? null
-      const lonG = longitudinalG?.at(i) ?? null
-      const kmh = speed.at(i)
-      full.push({
-        distanceKm: d, // metres for now; normalized below
-        timeSec: t - startTime,
-        speedKmh: kmh != null ? kmh * toKmh : null,
-        throttlePct: throttle ? scaled(throttle.sampler.at(i), throttle.scale) : null,
-        brakePct: brake ? scaled(brake.sampler.at(i), brake.scale) : null,
-        brakeABSactive: absEvents.length ? absCursor.valueAt(t) > 0 : null,
-        gear: gearEvents.length ? Math.round(gearCursor.valueAt(t)) : null,
-        rpm: rpm?.at(i) ?? null,
-        // % of lock, + right → nominal degrees, + left (iRacing convention).
-        steeringDeg: steer != null && steering ? -(steer * steering.scale / 100) * NOMINAL_STEERING_HALF_RANGE_DEG : null,
-        lat: latitude?.at(i) ?? null,
-        lon: longitude?.at(i) ?? null,
-        altitudeM: null,
-        latAccelMs2: latG != null ? latG * G : null,
-        longAccelMs2: lonG != null ? -lonG * G : null,
-        yawRateDegS: null,
-        tireTempLF: offset(tyreTemp[0]?.at(i), tempOffset),
-        tireTempRF: offset(tyreTemp[1]?.at(i), tempOffset),
-        tireTempLR: offset(tyreTemp[2]?.at(i), tempOffset),
-        tireTempRR: offset(tyreTemp[3]?.at(i), tempOffset),
-        tirePressureLF: scaled(tyrePressure[0]?.at(i) ?? null, pressureScale),
-        tirePressureRF: scaled(tyrePressure[1]?.at(i) ?? null, pressureScale),
-        tirePressureLR: scaled(tyrePressure[2]?.at(i) ?? null, pressureScale),
-        tirePressureRR: scaled(tyrePressure[3]?.at(i) ?? null, pressureScale),
-        tireWearLF: scaled(tyreWear[0]?.at(i) ?? null, wearScale),
-        tireWearRF: scaled(tyreWear[1]?.at(i) ?? null, wearScale),
-        tireWearLR: scaled(tyreWear[2]?.at(i) ?? null, wearScale),
-        tireWearRR: scaled(tyreWear[3]?.at(i) ?? null, wearScale),
+      const inPits = stepValue(pitEvents, startTs + 0.01) > 0 || pitEvents.some((e) => e.value > 0 && e.ts > startTs && e.ts < finish.ts)
+      const lapTimeSec = official > 0 ? official : finish.ts - startTs
+      if (!(lapTimeSec > 0)) continue
+
+      // Full-resolution points over the master timeline.
+      const startTime = times[startIdx]!
+      let minDist = Infinity
+      let maxDist = -Infinity
+      const full: LapPoint[] = []
+      const gearCursor = new EventCursor(gearEvents)
+      const absCursor = new EventCursor(absEvents)
+      for (let i = startIdx; i <= endIdx; i++) {
+        const t = times[i]!
+        const d = lapDist.at(i)
+        if (d == null || !Number.isFinite(t)) continue
+        if (d < minDist) minDist = d
+        if (d > maxDist) maxDist = d
+        const steer = steering?.sampler.at(i) ?? null
+        const latG = lateralG?.at(i) ?? null
+        const lonG = longitudinalG?.at(i) ?? null
+        const kmh = speed.at(i)
+        full.push({
+          distanceKm: d, // metres for now; normalized below
+          timeSec: t - startTime,
+          speedKmh: kmh != null ? kmh * toKmh : null,
+          throttlePct: throttle ? scaled(throttle.sampler.at(i), throttle.scale) : null,
+          brakePct: brake ? scaled(brake.sampler.at(i), brake.scale) : null,
+          brakeABSactive: absEvents.length ? absCursor.valueAt(t) > 0 : null,
+          gear: gearEvents.length ? Math.round(gearCursor.valueAt(t)) : null,
+          rpm: rpm?.at(i) ?? null,
+          // % of lock, + right → nominal degrees, + left (iRacing convention).
+          steeringDeg: steer != null && steering ? -(steer * steering.scale / 100) * NOMINAL_STEERING_HALF_RANGE_DEG : null,
+          lat: latitude?.at(i) ?? null,
+          lon: longitude?.at(i) ?? null,
+          altitudeM: null,
+          latAccelMs2: latG != null ? latG * G : null,
+          longAccelMs2: lonG != null ? -lonG * G : null,
+          yawRateDegS: null,
+          tireTempLF: offset(tyreTemp[0]?.at(i), tempOffset),
+          tireTempRF: offset(tyreTemp[1]?.at(i), tempOffset),
+          tireTempLR: offset(tyreTemp[2]?.at(i), tempOffset),
+          tireTempRR: offset(tyreTemp[3]?.at(i), tempOffset),
+          tirePressureLF: scaled(tyrePressure[0]?.at(i) ?? null, pressureScale),
+          tirePressureRF: scaled(tyrePressure[1]?.at(i) ?? null, pressureScale),
+          tirePressureLR: scaled(tyrePressure[2]?.at(i) ?? null, pressureScale),
+          tirePressureRR: scaled(tyrePressure[3]?.at(i) ?? null, pressureScale),
+          tireWearLF: scaled(tyreWear[0]?.at(i) ?? null, wearScale),
+          tireWearRF: scaled(tyreWear[1]?.at(i) ?? null, wearScale),
+          tireWearLR: scaled(tyreWear[2]?.at(i) ?? null, wearScale),
+          tireWearRR: scaled(tyreWear[3]?.at(i) ?? null, wearScale),
+        })
+      }
+      if (full.length < MIN_LAP_POINTS || !Number.isFinite(minDist)) continue
+      for (const p of full) p.distanceKm = (p.distanceKm - minDist) / 1000
+      const distanceKm = (maxDist - minDist) / 1000
+
+      const sectorTimes = lapSectors({
+        official,
+        startTs,
+        finishTs: finish.ts,
+        s1: atFinish(s1Events),
+        s2: atFinish(s2Events),
+        sectorEvents,
+        distanceAt: (ts) => {
+          const idx = Math.min(endIdx, Math.max(startIdx, lowerBound(times, ts)))
+          const d = lapDist.at(idx)
+          return d == null ? null : (d - minDist) / 1000
+        },
+        distanceKm,
       })
+
+      const lapNumber = Math.max(lastLapNumber + 1, counterValue >= 1 ? counterValue : 1)
+      lastLapNumber = lapNumber
+      const lengthM = maxDist - minDist
+      const lengthOk = trackLengthM == null || Math.abs(lengthM - trackLengthM) <= trackLengthM * LAP_LENGTH_TOLERANCE
+      const completionPct = trackLengthM != null && trackLengthM > 0 ? round(lengthM / trackLengthM, 4) : null
+      const flags: LapFlag[] = []
+      if (!(official > 0)) flags.push("no-lap-last-time")
+      if (inPits) flags.push("pit-lane")
+      if (completionPct != null && completionPct < LMU_THRESHOLDS.MIN_COMPLETION_PCT) flags.push("low-completion")
+      if (completionPct != null && completionPct > LMU_THRESHOLDS.MAX_COMPLETION_PCT) flags.push("distance-mismatch")
+      const avgKmh = ((trackLengthM ?? lengthM) / 1000 / lapTimeSec) * 3600
+      if (avgKmh > LMU_THRESHOLDS.MAX_AVG_SPEED_KMH) flags.push("unrealistic-speed")
+      const isClean = flags.length === 0
+      if (official > 0 && !inPits && lengthOk) completedLengthsM.push(lengthM)
+
+      const byDist = downsample([...full].sort((a, b) => a.distanceKm - b.distanceKm), maxPoints)
+      const byTime = downsample(full, maxPoints) // already in time order
+      yield {
+        byDist,
+        byTime,
+        lapNumber,
+        lapTimeSec,
+        distanceKm,
+        points: byTime.length,
+        downsampledFrom: full.length,
+        sectorTimes,
+        sessionNum: 0,
+        sessionType: rec.metadata.SessionType || undefined,
+        completed: true,
+        completionPct,
+        flags,
+        isClean,
+        lmuLapCounter: counterValue,
+        inPits,
+      }
     }
-    if (full.length < MIN_LAP_POINTS || !Number.isFinite(minDist)) continue
-    for (const p of full) p.distanceKm = (p.distanceKm - minDist) / 1000
-    const distanceKm = (maxDist - minDist) / 1000
 
-    const sectorTimes = lapSectors({
-      official,
-      startTs,
-      finishTs: finish.ts,
-      s1: atFinish(s1Events),
-      s2: atFinish(s2Events),
-      sectorEvents,
-      distanceAt: (ts) => {
-        const idx = Math.min(endIdx, Math.max(startIdx, lowerBound(times, ts)))
-        const d = lapDist.at(idx)
-        return d == null ? null : (d - minDist) / 1000
-      },
-      distanceKm,
-    })
-
-    const lapNumber = Math.max(lastLapNumber + 1, counterValue >= 1 ? counterValue : 1)
-    lastLapNumber = lapNumber
-    const lengthM = maxDist - minDist
-    const lengthOk = trackLengthM == null || Math.abs(lengthM - trackLengthM) <= trackLengthM * LAP_LENGTH_TOLERANCE
-    const isClean = official > 0 && !inPits && lengthOk
-    if (isClean) completedLengthsM.push(lengthM)
-
-    const byDist = downsample([...full].sort((a, b) => a.distanceKm - b.distanceKm), maxPoints)
-    const byTime = downsample(full, maxPoints) // already in time order
-    laps.push({
-      byDist,
-      byTime,
-      lapNumber,
-      lapTimeSec,
-      distanceKm,
-      points: byTime.length,
-      sectorTimes,
-      sessionNum: 0,
-      sessionType: rec.metadata.SessionType || undefined,
-      isClean,
-      lmuLapCounter: counterValue,
-      inPits,
-    })
+    // Peaks first (set up front): one odd lap must never set the layout length.
+    if (session.trackLengthKm == null) {
+      const lengthFromLaps = median(completedLengthsM)
+      if (lengthFromLaps != null) session.trackLengthKm = round(lengthFromLaps / 1000, 4)
+    }
   }
 
-  // Peaks first: one odd lap must never set the layout length.
-  const lengthFromLaps = median(completedLengthsM)
-  const trackLengthKm = trackLengthM != null
-    ? trackLengthM / 1000
-    : lengthFromLaps != null
-      ? lengthFromLaps / 1000
-      : null
-
-  return { session: sessionInfo(rec.metadata, trackLengthKm), laps, warnings }
+  return { session, warnings, laps: laps() }
 }
 
 // ---------------------------------------------------------------------------
@@ -458,7 +513,7 @@ function lapSectors(input: SectorInput): LmuSectorTime[] {
  * wrap when the value stays low for the following sample too, so a
  * one-sample glitch to 0 is not mistaken for a line crossing.
  */
-export function estimateTrackLengthM(values: number[]): number | null {
+export function estimateTrackLengthM(values: LmuNumberColumn): number | null {
   const peaks: number[] = []
   let max = -Infinity
   for (let i = 0; i < values.length; i++) {
@@ -483,7 +538,7 @@ export function estimateTrackLengthM(values: number[]): number | null {
  * that sticks is a wrap (downwards) or a reposition (upwards, e.g. reset to
  * the pits) and is followed.
  */
-export function unwrapLapDist(values: number[], trackLengthM: number | null): number[] {
+export function unwrapLapDist(values: LmuNumberColumn, trackLengthM: number | null): number[] {
   const out = new Array<number>(values.length)
   const half = trackLengthM ? trackLengthM / 2 : null
   let offset = 0
@@ -508,7 +563,7 @@ export function unwrapLapDist(values: number[], trackLengthM: number | null): nu
   return out
 }
 
-function nextFinite(values: number[], from: number): { index: number; value: number } | null {
+function nextFinite(values: LmuNumberColumn, from: number): { index: number; value: number } | null {
   for (let i = from; i < values.length; i++) {
     const v = values[i]!
     if (Number.isFinite(v)) return { index: i, value: v }
@@ -521,7 +576,7 @@ function nextFinite(values: number[], from: number): { index: number; value: num
 
 /** Linear interpolation of a fixed-rate channel at master sample index i. */
 class Sampler {
-  constructor(private readonly values: number[], private readonly ratio: number) {}
+  constructor(private readonly values: LmuNumberColumn, private readonly ratio: number) {}
 
   at(masterIndex: number): number | null {
     const pos = masterIndex * this.ratio
@@ -603,7 +658,12 @@ function percentScale(ch: LmuChannelData | undefined): number {
   if (!ch) return 1
   if (ch.unit.includes("%")) return 1
   let maxAbs = 0
-  for (const v of ch.columns.flat()) if (Number.isFinite(v) && Math.abs(v) > maxAbs) maxAbs = Math.abs(v)
+  for (const col of ch.columns) {
+    for (let i = 0; i < col.length; i++) {
+      const v = col[i]!
+      if (Number.isFinite(v) && Math.abs(v) > maxAbs) maxAbs = Math.abs(v)
+    }
+  }
   return maxAbs <= 1.0001 ? 100 : 1
 }
 
@@ -635,7 +695,7 @@ function finite(v: number | undefined): number | null {
 }
 
 /** First index with arr[i] >= x (arr ascending). */
-function lowerBound(arr: number[], x: number): number {
+function lowerBound(arr: LmuNumberColumn, x: number): number {
   let lo = 0
   let hi = arr.length
   while (lo < hi) {
@@ -647,7 +707,7 @@ function lowerBound(arr: number[], x: number): number {
 }
 
 /** First index with arr[i] > x (arr ascending). */
-function upperBound(arr: number[], x: number): number {
+function upperBound(arr: LmuNumberColumn, x: number): number {
   let lo = 0
   let hi = arr.length
   while (lo < hi) {

@@ -40,7 +40,9 @@ export type LapFlag =
   | 'incident-delta'       // incident count increased during the lap
   | 'unrealistic-speed'    // avg speed above MAX_AVG_SPEED_KMH (teleport/reset)
   | 'too-few-samples'      // fewer than MIN_SAMPLES telemetry samples
-  | 'no-sector-data';      // one or more sector boundary crossings unobservable
+  | 'no-sector-data'       // one or more sector boundary crossings unobservable
+  | 'pit-lane'             // LMU: the car was in the pit lane during the lap (in-lap / out-lap)
+  | 'distance-mismatch';   // LMU: the lap covered well over the layout length (Lap Dist glitch, cut)
 
 export type TimingSource =
   | 'lap-last-lap-time'    // authoritative: sim clock

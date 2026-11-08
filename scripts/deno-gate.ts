@@ -8,8 +8,8 @@
  */
 import { IBT } from '../dist/neutral/ibt.js';
 import { normalizeIbt, NORMALIZE_THRESHOLDS } from '../dist/neutral/normalize.js';
-import { normalizeLmuRecording, readLmuTables } from '../dist/neutral/lmu.js';
-import { buildSyntheticSession } from '../tests/fixtures/lmu-session.ts';
+import { normalizeLmuRecording, packLmuBundle, readLmuBundle, readLmuTables } from '../dist/neutral/lmu.js';
+import { buildSyntheticSession } from '../dist/neutral/lmu-testing.js';
 
 // 1. Import gate: the classes/functions exist.
 if (typeof IBT?.fromBuffer !== 'function') throw new Error('IBT.fromBuffer missing');
@@ -69,4 +69,11 @@ if (lmuLaps.length !== 3 || Math.abs(lmuLaps[0]!.lapTimeSec - lmu.expected.lapTi
   throw new Error(`gate failed: LMU laps = ${JSON.stringify(lmuLaps.map((l: { lapTimeSec: number }) => l.lapTimeSec))}`);
 }
 
-console.log('deno-gate OK: core + normalize + lmu run under Deno; fallback timing verified');
+// 4. LMU bundle gate: what the server does — read a bundle, normalize it.
+const bundle = packLmuBundle(lmu.recording, { fileName: 'gate.duckdb', sha256: '0'.repeat(64), sizeBytes: 1 });
+const fromBundle = normalizeLmuRecording((await readLmuBundle(bundle)).recording).laps;
+if (JSON.stringify(fromBundle.map((l: { lapTimeSec: number }) => l.lapTimeSec)) !== JSON.stringify(lmuLaps.map((l: { lapTimeSec: number }) => l.lapTimeSec))) {
+  throw new Error('gate failed: LMU bundle laps differ from the recording');
+}
+
+console.log('deno-gate OK: core + normalize + lmu (+ bundle) run under Deno; fallback timing verified');
