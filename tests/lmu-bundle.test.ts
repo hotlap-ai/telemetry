@@ -12,7 +12,7 @@ import {
   readLmuBundleManifest,
   type LmuRecordingData,
 } from "../src/lmu"
-import { buildSyntheticSession } from "./fixtures/lmu-session"
+import { buildSyntheticSession } from "../src/lmu/testing"
 
 const SOURCE = { fileName: "Autodromo Sintetico_P_2026-11-07T18_30_00Z.duckdb", sha256: "ab".repeat(32), sizeBytes: 6_800_000 }
 const session = buildSyntheticSession()

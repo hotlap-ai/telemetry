@@ -1,7 +1,7 @@
-import type { LmuRecordingData } from "../../src/lmu/normalize"
+import type { LmuRecordingData } from "./normalize"
 
 /**
- * A realistic synthetic LMU session, simulated at 100 Hz on a 2.9 km layout
+ * Test helper for consumers (`@hotlap.ai/telemetry/lmu/testing`): a realistic synthetic LMU session, simulated at 100 Hz on a 2.9 km layout
  * (short enough to catch the 3 km default-length bug), with the table shapes
  * LMU writes:
  *
@@ -32,7 +32,7 @@ export interface SyntheticSession {
   }
 }
 
-interface SimOptions {
+export interface SimOptions {
   /** Seconds slower per lap, per lap index (1-based); default all equal. */
   lapPace?: Record<number, number>
   /** Timed laps after the out-lap (default 3); one more in-lap is cut off. */

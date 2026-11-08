@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { LMU_CHANNELS_USED, LMU_EVENTS_USED, ident, normalizeLmuRecording, readLmuTables, type LmuTableSource } from "../src/lmu"
-import { buildSyntheticSession } from "./fixtures/lmu-session"
+import { buildSyntheticSession } from "../src/lmu/testing"
 
 interface FakeTable {
   columnNames: string[]

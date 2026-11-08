@@ -10,7 +10,7 @@ import {
   unwrapLapDist,
   type LmuRecordingData,
 } from "../src/lmu/normalize"
-import { buildSyntheticSession, TRACK_LENGTH_M } from "./fixtures/lmu-session"
+import { buildSyntheticSession, TRACK_LENGTH_M } from "../src/lmu/testing"
 
 const session = buildSyntheticSession()
 const result = normalizeLmuRecording(session.recording)

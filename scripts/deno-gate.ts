@@ -9,7 +9,7 @@
 import { IBT } from '../dist/neutral/ibt.js';
 import { normalizeIbt, NORMALIZE_THRESHOLDS } from '../dist/neutral/normalize.js';
 import { normalizeLmuRecording, packLmuBundle, readLmuBundle, readLmuTables } from '../dist/neutral/lmu.js';
-import { buildSyntheticSession } from '../tests/fixtures/lmu-session.ts';
+import { buildSyntheticSession } from '../dist/neutral/lmu-testing.js';
 
 // 1. Import gate: the classes/functions exist.
 if (typeof IBT?.fromBuffer !== 'function') throw new Error('IBT.fromBuffer missing');
