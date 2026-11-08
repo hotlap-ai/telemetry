@@ -1,6 +1,6 @@
 /**
- * Runtime-neutrality gate (RFC-0001 C1): verifies the built ./core and
- * ./normalize artifacts import and run under Deno — the Supabase Edge
+ * Runtime-neutrality gate (RFC-0001 C1): verifies the built ./core,
+ * ./normalize and ./lmu artifacts import and run under Deno — the Supabase Edge
  * Function runtime — with no fixtures required.
  *
  * Run after `bun run build`:
@@ -8,6 +8,8 @@
  */
 import { IBT } from '../dist/neutral/ibt.js';
 import { normalizeIbt, NORMALIZE_THRESHOLDS } from '../dist/neutral/normalize.js';
+import { normalizeLmuRecording, readLmuTables } from '../dist/neutral/lmu.js';
+import { buildSyntheticSession } from '../tests/fixtures/lmu-session.ts';
 
 // 1. Import gate: the classes/functions exist.
 if (typeof IBT?.fromBuffer !== 'function') throw new Error('IBT.fromBuffer missing');
@@ -59,4 +61,12 @@ const l3 = laps.find((l: { lapNumber: number }) => l.lapNumber === 3);
 if (l3?.completed !== false || l3?.lapTimeSec !== null) {
   throw new Error(`gate failed: partial lap 3 = ${JSON.stringify(l3)}`);
 }
-console.log('deno-gate OK: core + normalize run under Deno; fallback timing verified');
+// 3. LMU gate: the synthetic session normalizes to its three timed laps.
+if (typeof readLmuTables !== 'function') throw new Error('readLmuTables missing');
+const lmu = buildSyntheticSession();
+const lmuLaps = normalizeLmuRecording(lmu.recording).laps;
+if (lmuLaps.length !== 3 || Math.abs(lmuLaps[0]!.lapTimeSec - lmu.expected.lapTimes[0]!) > 0.001) {
+  throw new Error(`gate failed: LMU laps = ${JSON.stringify(lmuLaps.map((l: { lapTimeSec: number }) => l.lapTimeSec))}`);
+}
+
+console.log('deno-gate OK: core + normalize + lmu run under Deno; fallback timing verified');

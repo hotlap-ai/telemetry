@@ -1,7 +1,7 @@
 {
   "name": "@hotlap.ai/telemetry",
-  "version": "1.4.0",
-  "description": "High-performance iRacing telemetry library for Bun - IBT file parsing and live data streaming",
+  "version": "1.5.0",
+  "description": "High-performance sim-racing telemetry library for Bun - iRacing IBT parsing, Le Mans Ultimate recordings and live data streaming",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -37,6 +37,11 @@
       "import": "./dist/neutral/lap-points.js",
       "default": "./dist/neutral/lap-points.js"
     },
+    "./lmu": {
+      "types": "./dist/lmu.d.ts",
+      "import": "./dist/neutral/lmu.js",
+      "default": "./dist/neutral/lmu.js"
+    },
     "./live": {
       "types": "./dist/live.d.ts",
       "import": "./dist/live.js",
@@ -60,7 +65,7 @@
   "scripts": {
     "build": "bun run build:js && bun run build:types",
     "build:js": "bun build ./src/index.ts ./src/ibt.ts ./src/live.ts ./src/constants.ts ./src/cli.ts ./src/telemetry-server.ts ./src/types.ts ./src/binary-reader.ts --outdir ./dist --target bun --splitting && bun run build:neutral",
-    "build:neutral": "bun build ./src/ibt.ts ./src/normalize.ts ./src/session-yaml.ts ./src/lap-points.ts --outdir ./dist/neutral --target browser --splitting",
+    "build:neutral": "bun build ./src/ibt.ts ./src/normalize.ts ./src/session-yaml.ts ./src/lap-points.ts ./src/lmu.ts --outdir ./dist/neutral --target browser --splitting",
     "build:types": "tsc --emitDeclarationOnly --declaration --declarationMap --outDir ./dist",
     "build:server": "bun build ./src/telemetry-server.ts --compile --outfile ./dist/hotlap-telemetry",
     "build:sidecar": "bun run build:server && bun run scripts/copy-sidecar.ts",
@@ -93,7 +98,10 @@
     "bun",
     "sim-racing",
     "motorsport",
-    "data-logging"
+    "data-logging",
+    "le-mans-ultimate",
+    "lmu",
+    "duckdb"
   ],
   "author": "HotLap.ai",
   "license": "MIT",

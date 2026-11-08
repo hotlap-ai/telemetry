@@ -7,13 +7,14 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
 [![Bun](https://img.shields.io/badge/Bun-%3E%3D1.0.0-black.svg)](https://bun.sh/)
 
-High-performance iRacing telemetry library for [Bun](https://bun.sh), built by the [HotLap.ai](https://hotlap.ai) team. Parse IBT telemetry files and stream live data from iRacing via Windows shared memory.
+High-performance sim-racing telemetry library for [Bun](https://bun.sh), built by the [HotLap.ai](https://hotlap.ai) team. Parse iRacing IBT files and Le Mans Ultimate recordings, and stream live data from iRacing via Windows shared memory.
 
-> **Note:** This is an unofficial community library, not affiliated with or endorsed by iRacing.com.
+> **Note:** This is an unofficial community library, not affiliated with or endorsed by iRacing.com or Motorsport Games.
 
 ## Features
 
 - **IBT File Parsing** - Read and analyze iRacing telemetry binary files (.ibt)
+- **Le Mans Ultimate** - Turn LMU `.duckdb` recordings into the same lap points as IBT files (runtime-neutral, bring your own DuckDB)
 - **Live Telemetry** - Stream real-time data from iRacing via Windows shared memory (FFI)
 - **WebSocket Server** - Built-in telemetry server for real-time data streaming
 - **Full TypeScript Support** - Complete type definitions for all APIs
@@ -56,6 +57,61 @@ for (let i = 0; i < ibt.recordCount; i++) {
   const brake = ibt.get('Brake', i);
 }
 ```
+
+### Le Mans Ultimate Recordings
+
+LMU (v1.2+) writes each session to `<LMU install>/UserData/Telemetry/*.duckdb` once
+*Settings → Gameplay → Automatic Telemetry Recording* is on. `@hotlap.ai/telemetry/lmu`
+is runtime-neutral: it carries no DuckDB and does no file I/O. You open the file with
+whichever DuckDB your runtime has and hand over an `LmuTableSource`:
+
+```typescript
+import { DuckDBInstance } from '@duckdb/node-api';
+import { LMU_CHANNELS_USED, LMU_EVENTS_USED, normalizeLmuRecording, readLmuTables } from '@hotlap.ai/telemetry/lmu';
+
+const db = await DuckDBInstance.create('session.duckdb', { access_mode: 'READ_ONLY' });
+const conn = await db.connect();
+const recording = await readLmuTables(
+  {
+    queryRows: async (sql) => (await conn.runAndReadAll(sql)).getRowObjectsJS(),
+    readColumns: async (sql) => {
+      const reader = await conn.runAndReadAll(sql);
+      return { columnNames: reader.columnNames(), columns: reader.getColumnsJS() };
+    },
+  },
+  { channels: LMU_CHANNELS_USED, events: LMU_EVENTS_USED }, // skip the ~85 unused tables
+);
+conn.closeSync();
+db.closeSync();
+
+const { session, laps, warnings } = normalizeLmuRecording(recording, { maxPoints: 1000 });
+console.log(session.trackName, session.trackLengthKm, laps.map((l) => l.lapTimeSec));
+```
+
+Each lap has `byDist` / `byTime` `LapPoint` series (the same shape `extractLapPoints`
+returns for IBT files), `sectorTimes`, LMU's official `lapTimeSec`, and `isClean`
+(official time present, no pit visit, length within 5% of the layout).
+
+What the mapping relies on (cross-checked against independent open-source parsers):
+
+- Index tables `metadata(key, value)`, `channelsList(channelName, frequency, unit)` and
+  `eventsList(eventName, unit)`; one table per channel (`value`, or `value1..value4` =
+  FL, FR, RL, RR) and one `(ts, value)` table per event. Names are always discovered
+  from the index tables, and rates are read from `channelsList` because players can
+  change them in `UserData/Telemetry/config.json`.
+- `GPS Time` (100 Hz) holds the session time of each master sample; a channel at *f* Hz
+  lines up with master sample *i* at row *i·f/100*. Events are written on change, with
+  `ts` in session time.
+- Laps run from one `Lap` event to the next. The official time is the `Lap Time` event
+  at the finish (0 = invalid). Counter 0 is the out-lap (practice) or formation + first
+  lap (race). `Last Sector1/2` are cumulative splits.
+- `Lap Dist` (m) wraps at the line. GPS lat/lon are synthetic but keep the track shape;
+  there is no world x/y/z and no yaw rate.
+- `G Force Long` holds **lateral** g (+ left) and `G Force Lat` holds **longitudinal** g
+  (+ braking). `Steering Pos` is % of lock, + right; it is mapped to a nominal ±270°
+  with iRacing's sign (+ left).
+- A missing optional channel becomes `null` points plus a warning. A missing
+  `GPS Time` / `Lap Dist` throws `LmuParseError`.
 
 ### Live Telemetry
 
