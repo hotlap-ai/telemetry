@@ -27,6 +27,15 @@ export const LMU_BUNDLE_VERSION = 1
 export const LMU_BUNDLE_EXTENSION = ".lmu.zip"
 
 /**
+ * Largest bundle a server is expected to parse: about 3.5 hours of
+ * LMU_BUNDLE_CHANNELS (~23 MB per hour). A server holds the whole bundle while
+ * it decodes the normalizer's tables; measured in Deno, a 3 h bundle (67 MB)
+ * peaks at ~235 MB of heap + external memory, near an Edge Function's
+ * 256 MB. Hosts skip larger recordings instead of uploading them.
+ */
+export const LMU_BUNDLE_MAX_BYTES = 80 * 1024 * 1024
+
+/**
  * Channels a bundle carries: the ones the normalizer reads today plus the
  * ones we expect to use next, so recordings already uploaded can be
  * re-parsed for them. Every event is carried (events are sparse and tiny).
