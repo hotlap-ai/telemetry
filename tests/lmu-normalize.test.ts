@@ -144,10 +144,57 @@ describe("normalizeLmuRecording: session info", () => {
       carName: "Test Hypercar #7",
       carKey: "Test Hypercar",
       carDisplayName: "Test Hypercar",
+      carNumber: "7",
       carClass: "Hypercar",
       sessionType: "Practice",
       recordingTime: "2026-11-07T18:30:00.000Z",
       driverName: "Test Driver",
+    })
+  })
+
+  test("real LMU metadata: the car is a team entry, and a single-layout track repeats its name", () => {
+    // Values as recorded by LMU (Monza practice, GT3).
+    const info = sessionInfo(
+      {
+        TrackName: "Autodromo Nazionale Monza",
+        TrackLayout: "Autodromo Nazionale Monza",
+        CarName: "Garage 59 2026 #10:LM",
+        CarClass: "GT3",
+        SessionType: "Practice",
+        RecordingTime: "2026-11-17T18_57_57Z",
+      },
+      5.7764,
+    )
+    expect(info).toMatchObject({
+      trackName: "Autodromo Nazionale Monza",
+      trackLayout: null,
+      trackKey: "Autodromo Nazionale Monza|",
+      carName: "Garage 59 2026 #10:LM",
+      carKey: "Garage 59 2026",
+      carDisplayName: "Garage 59 2026",
+      carNumber: "10",
+      carClass: "GT3",
+    })
+  })
+
+  test("car entry suffixes: number, optional series tag, or neither", () => {
+    const key = (CarName: string) => {
+      const { carKey, carNumber } = sessionInfo({ CarName }, null)
+      return [carKey, carNumber]
+    }
+    expect(key("Ferrari AF Corse 2026 #51:WEC")).toEqual(["Ferrari AF Corse 2026", "51"])
+    expect(key("Test Hypercar #7")).toEqual(["Test Hypercar", "7"])
+    expect(key("Team #007B:ELMS-P2")).toEqual(["Team", "007B"])
+    expect(key("Proton Competition")).toEqual(["Proton Competition", null])
+    // A "#" that isn't a trailing car number is part of the name.
+    expect(key("Team #1 Racing 2026")).toEqual(["Team #1 Racing 2026", null])
+    expect(key("#10:LM")).toEqual(["#10:LM", "10"])
+  })
+
+  test("a different layout name is kept", () => {
+    expect(sessionInfo({ TrackName: "Circuit de la Sarthe", TrackLayout: "Mulsanne" }, null)).toMatchObject({
+      trackLayout: "Mulsanne",
+      trackKey: "Circuit de la Sarthe|Mulsanne",
     })
   })
 

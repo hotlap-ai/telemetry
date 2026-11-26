@@ -1,6 +1,6 @@
 {
   "name": "@hotlap.ai/telemetry",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "High-performance sim-racing telemetry library for Bun - iRacing IBT parsing, Le Mans Ultimate recordings and live data streaming",
   "type": "module",
   "main": "./dist/index.js",

@@ -57,15 +57,17 @@ export interface LmuRecordingData {
 
 export interface LmuSessionInfo {
   trackName: string
-  /** LMU layout name (e.g. "Circuit de la Sarthe"), or null when absent. */
+  /** LMU layout name, or null when absent or just the track name again. */
   trackLayout: string | null
   /** Stable catalog key: "<TrackName>|<TrackLayout>". */
   trackKey: string
-  /** As recorded, including the car number ("Ferrari 499P #50"). */
+  /** As recorded: the team entry with its number and series tag ("Garage 59 2026 #10:LM"). */
   carName: string
-  /** Car without the trailing "#NN" number; the catalog key. */
+  /** The team entry without its car number and series tag ("Garage 59 2026"); the catalog key. */
   carKey: string
   carDisplayName: string
+  /** The entry's car number ("10"), when CarName carries one. */
+  carNumber: string | null
   carClass: string | null
   sessionType: string | null
   /** ISO 8601, or null when RecordingTime is missing or unparseable. */
@@ -310,7 +312,8 @@ export function streamLmuRecording(rec: LmuRecordingData, options: NormalizeOpti
       if (endIdx - startIdx + 1 < MIN_LAP_POINTS) continue
 
       const inPits = stepValue(pitEvents, startTs + 0.01) > 0 || pitEvents.some((e) => e.value > 0 && e.ts > startTs && e.ts < finish.ts)
-      const lapTimeSec = official > 0 ? official : finish.ts - startTs
+      // A measured time is a difference of floats: keep it to the millisecond.
+      const lapTimeSec = official > 0 ? official : round(finish.ts - startTs, 3)
       if (!(lapTimeSec > 0)) continue
 
       // Full-resolution points over the master timeline.
@@ -430,11 +433,22 @@ export function streamLmuRecording(rec: LmuRecordingData, options: NormalizeOpti
 // ---------------------------------------------------------------------------
 // Session metadata
 
+/**
+ * LMU's CarName is the team entry, e.g. "Garage 59 2026 #10:LM": team and
+ * season, the car number, then a series tag. The number and tag are dropped
+ * from the catalog key so every car of an entry is the same catalog car.
+ * (Recordings carry no car model; CarClass is the reliable grouping.)
+ */
+const CAR_ENTRY_SUFFIX = /\s*#(\d+[A-Za-z]?)(?::[\w-]+)?\s*$/
+
 export function sessionInfo(metadata: Record<string, string>, trackLengthKm: number | null): LmuSessionInfo {
   const trackName = clean(metadata.TrackName) || "Unknown Track"
-  const trackLayout = clean(metadata.TrackLayout) || null
+  // LMU repeats the track name as the layout when a track has a single one.
+  const layout = clean(metadata.TrackLayout)
+  const trackLayout = layout && layout.toLowerCase() !== trackName.toLowerCase() ? layout : null
   const carName = clean(metadata.CarName) || "Unknown Car"
-  const carKey = carName.replace(/\s+#\d+\s*$/, "").trim() || carName
+  const entry = CAR_ENTRY_SUFFIX.exec(carName)
+  const carKey = (entry ? carName.slice(0, entry.index) : carName).trim() || carName
   return {
     trackName,
     trackLayout,
@@ -442,6 +456,7 @@ export function sessionInfo(metadata: Record<string, string>, trackLengthKm: num
     carName,
     carKey,
     carDisplayName: carKey,
+    carNumber: entry?.[1] ?? null,
     carClass: clean(metadata.CarClass) || null,
     sessionType: clean(metadata.SessionType) || null,
     recordingTime: parseRecordingTime(metadata.RecordingTime),
