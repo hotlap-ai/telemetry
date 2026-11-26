@@ -89,8 +89,36 @@ console.log(session.trackName, session.trackLengthKm, laps.map((l) => l.lapTimeS
 ```
 
 Each lap has `byDist` / `byTime` `LapPoint` series (the same shape `extractLapPoints`
-returns for IBT files), `sectorTimes`, LMU's official `lapTimeSec`, and `isClean`
-(official time present, no pit visit, length within 5% of the layout).
+returns for IBT files), `sectorTimes`, LMU's official `lapTimeSec`, `completionPct` (a
+fraction of the layout length) and `flags`, using the same `LapFlag` vocabulary as
+`normalizeIbt`: `no-lap-last-time`, `pit-lane`, `low-completion`, `distance-mismatch`,
+`unrealistic-speed` (thresholds in `LMU_THRESHOLDS`). `isClean` means no flags.
+
+#### Bundles: LMU laps on hosts without DuckDB
+
+Servers (Supabase Edge Functions) can't run DuckDB. The host that can packs the tables
+into an **LMU bundle**, a store-only zip of one Snappy Parquet file per table plus a
+`manifest.json`, which any JavaScript runtime reads back with no native code:
+
+```typescript
+import {
+  LMU_BUNDLE_CHANNELS, LMU_CHANNELS_USED, LMU_EVENTS_USED,
+  normalizeLmuRecording, packLmuBundle, readLmuBundle, readLmuTables,
+} from '@hotlap.ai/telemetry/lmu';
+
+// Where DuckDB runs: every event plus the channels HotLap.ai uses or plans to.
+const recording = await readLmuTables(source, { channels: LMU_BUNDLE_CHANNELS });
+const bundle = packLmuBundle(recording, { fileName, sha256, sizeBytes }); // Uint8Array, <name>.lmu.zip
+
+// Anywhere (Deno, browser, Bun): identical laps to reading the .duckdb.
+const { manifest, recording: fromBundle } = await readLmuBundle(bundle, { channels: LMU_CHANNELS_USED, events: LMU_EVENTS_USED });
+const { laps } = normalizeLmuRecording(fromBundle);
+```
+
+Values are lossless: channel columns are FLOAT when every value fits float32 (LMU writes
+FLOAT) and come back as `Float32Array`; `GPS Time` is DOUBLE. A one-hour session of the
+normalizer's channels is about 14 MB. `manifest.source.sha256` is the original
+recording's hash, so a bundle stays tied to the file it came from.
 
 What the mapping relies on (cross-checked against independent open-source parsers):
 
