@@ -138,6 +138,12 @@ What the mapping relies on (cross-checked against independent open-source parser
 - `G Force Long` holds **lateral** g (+ left) and `G Force Lat` holds **longitudinal** g
   (+ braking). `Steering Pos` is % of lock, + right; it is mapped to a nominal ±270°
   with iRacing's sign (+ left).
+- `metadata` has `TrackName`, `TrackLayout` (the track name again on single-layout
+  tracks), `CarName`, `CarClass`, `SessionType`, `RecordingTime`, `DriverName`.
+  `CarName` is the **team entry** ("Garage 59 2026 #10:LM"), not the car model, and
+  there is no model field. `sessionInfo` drops the number and series tag for the
+  catalog key (`carKey`: "Garage 59 2026", `carNumber`: "10"); `CarClass` is the
+  reliable way to group comparable cars. Confirmed on a real recording.
 - A missing optional channel becomes `null` points plus a warning. A missing
   `GPS Time` / `Lap Dist` throws `LmuParseError`.
 
